@@ -1,0 +1,159 @@
+//https://coston-explorer.flare.network/address/0x712c0C81B2C6BB2175D199BabA966166e0893998
+//creates an index "Hayek" representing 0.0014 ETH (25%) + 0.00022 BTC (75%) representing crypto market cap
+//testUSD can be swapped to Hayek, current oracle price is used
+
+// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.6;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+
+
+import {IFtsoRegistry} from "@flarenetwork/flare-periphery-contracts/coston2/ftso/userInterfaces/IFtsoRegistry.sol";
+
+import {FlareContractsRegistryLibrary} from "@flarenetwork/flare-periphery-contracts/coston2/util-contracts/ContractRegistryLibrary.sol";
+
+
+interface IERC20WithDecimals is IERC20 {
+    function decimals() external view returns (uint8);
+}    
+contract SimpleFtsoExample is ERC20, Ownable {
+
+
+    IERC20WithDecimals public otherToken = IERC20WithDecimals(0x0B79FC311A7b89ed328b7AbA6f18495996eBb339);
+
+
+    constructor() ERC20("Hayek", "HAY") {
+    }
+
+    function invest(uint256 amount) public {
+        require(otherToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
+
+        // Mint the Hayek tokens
+        _mint(msg.sender, amount *1e18/10**otherToken.decimals() *1e18/getHayekPrice());
+    }    
+   
+    function redeem(uint256 amount) external {
+        _burn(msg.sender, amount);
+        require(otherToken.transfer(msg.sender, amount * 10**otherToken.decimals() /1e18* getHayekPrice() / 1e18), "Transfer of external token back to user failed");
+    }
+
+    function fund(uint256 amount) external onlyOwner {
+    require(otherToken.transferFrom(msg.sender, address(this), amount), "Transfer of external token for funding failed");
+}
+
+    // Allow the owner to withdraw ExternalToken from the Hayek contract
+    function withdraw(uint256 amount) external onlyOwner {
+        require(otherToken.transfer(msg.sender, amount), "Transfer of external token to owner failed");
+    }
+
+
+
+    function getCurrentTokenPriceWithDecimals(
+        string memory foreignTokenSymbol
+    )
+        public
+        view
+        returns (uint256 _price, uint256 _timestamp, uint256 _decimals)
+    {
+        IFtsoRegistry ftsoRegistry = FlareContractsRegistryLibrary
+            .getFtsoRegistry();
+
+        (_price, _timestamp, _decimals) = ftsoRegistry
+            .getCurrentPriceWithDecimals(foreignTokenSymbol);
+    }
+
+    function getSupportedIndicesAndSymbols(
+
+    )
+        public
+        view
+        returns (uint256[] memory _indices, string[] memory _symbols)
+    {
+        IFtsoRegistry ftsoRegistry = FlareContractsRegistryLibrary
+            .getFtsoRegistry();
+
+        (_indices, _symbols) = ftsoRegistry
+            .getSupportedIndicesAndSymbols();
+    }
+
+
+
+    function getTokenPriceInUSDWei(
+        string memory foreignTokenSymbol
+    )
+        public
+        view
+        returns (uint256 _priceInUSDWei, uint256 _finalizedTimestamp)
+    {
+        IFtsoRegistry ftsoRegistry = FlareContractsRegistryLibrary
+            .getFtsoRegistry();
+
+        (uint256 _price, uint256 _timestamp, uint256 _decimals) = ftsoRegistry
+            .getCurrentPriceWithDecimals(foreignTokenSymbol);
+
+        require(_decimals <= 18, "decimals > 18");
+
+        _priceInUSDWei = _price * (10 ** (18 - _decimals));
+        return (_priceInUSDWei, _timestamp);
+    }
+
+    function getTokenPairPrice(
+        string memory token1,
+        string memory token2
+    )
+        public
+        view
+        returns (uint256 _price1, uint256 _price2, uint256 _timestamp)
+    {
+        IFtsoRegistry ftsoRegistry = FlareContractsRegistryLibrary
+            .getFtsoRegistry();
+
+        (
+            uint256 _tPrice1,
+            uint256 _timestamp1,
+            uint256 decimals1
+        ) = ftsoRegistry.getCurrentPriceWithDecimals(token1);
+
+        (
+            uint256 _tPrice2,
+            uint256 _timestamp2,
+            uint256 decimals2
+        ) = ftsoRegistry.getCurrentPriceWithDecimals(token2);
+
+        require(decimals1 <= 18, "decimals1 > 18");
+        require(decimals2 <= 18, "decimals2 > 18");
+        _price1 = _tPrice1 * (10 ** (18 - decimals1));
+        _price2 = _tPrice2 * (10 ** (18 - decimals2));
+
+        // This holds for V1
+        require(_timestamp1 == _timestamp2, "timestamps not equal");
+
+        return (_price1, _price2, _timestamp1);
+    }
+
+    // Checks if token1/token2 price ratio is higher than numerator/denominator
+    // May overflow
+    function isPriceRatioHigherThan(
+        string memory token1,
+        string memory token2,
+        uint256 numerator,
+        uint256 denominator
+    ) public view returns (uint256 _price1, uint256 _price2, bool _is_higher) {
+        (_price1, _price2, ) = getTokenPairPrice(token1, token2);
+
+        _is_higher = _price1 * denominator > _price2 * numerator;
+    }
+
+    function getHayekPrice() public view returns (uint256)
+    {
+        
+        (uint256 priceETH,, uint256 decimalsETH) = getCurrentTokenPriceWithDecimals('testETH');
+        (uint256 priceBTC,, uint256 decimalsBTC) = getCurrentTokenPriceWithDecimals('testBTC');
+        return  priceETH/10**decimalsETH *1e18 * 14/10000 + priceBTC/10**decimalsBTC *1e18*22/100000;
+    }
+}
+        
